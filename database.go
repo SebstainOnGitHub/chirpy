@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"sync"
 )
@@ -26,7 +27,7 @@ func newDB(path string) (*DB, error) {
 
 func (db *DB) ensureDB() error {
 	_, err := os.Stat(db.path)
-	if err == os.ErrNotExist {
+	if os.IsNotExist(err) {
 		_, err := os.Create(db.path)
 		if err != nil {
 			return err
@@ -38,22 +39,32 @@ func (db *DB) ensureDB() error {
 func (db *DB) loadDB() (DBStructure, error) {
 	db.mux.RLock()
 	defer db.mux.RUnlock()
+
 	data, err := os.ReadFile(db.path)
+
 	if err != nil {
 		return DBStructure{}, err
 	}
 
 	dbstruct := DBStructure{}
 
-	if err = json.Unmarshal(data, &dbstruct); err != nil {
+	err = json.Unmarshal(data, &dbstruct)
+
+	//If file empty
+	if dbstruct.Chirps == nil {
+		return DBStructure{Chirps: map[int]chirp{}}, nil
+	}
+
+	if err != nil {
 		return DBStructure{}, err
 	}
+
 	return dbstruct, nil
 }
 
 func (db *DB) writeDB(dbstruct DBStructure) error {
-	db.mux.RLock()
-	defer db.mux.RUnlock()
+	db.mux.Lock()
+	defer db.mux.Unlock()
 	data, err := json.Marshal(dbstruct)
 	if err != nil {
 		return err
@@ -65,6 +76,7 @@ func (db *DB) writeDB(dbstruct DBStructure) error {
 	}
 	return nil
 }
+
 func (db *DB) getAllChirps() ([]chirp, error) {
 	chirpArr := []chirp{}
 	dbstruct, err := db.loadDB()
@@ -85,7 +97,9 @@ func (db *DB) createID() (int, error) {
 	return len(chirpArr) + 1, nil
 }
 
-func (db *DB) createChirp(body string) (chirp, error) {
+func (db *DB) createChirp(data io.ReadCloser) (chirp, error) {
+	dec := json.NewDecoder(data)
+
 	id, err := db.createID()
 
 	if err != nil {
@@ -94,40 +108,28 @@ func (db *DB) createChirp(body string) (chirp, error) {
 
 	newChirp := chirp{
 		ID:    id,
-		Chirp: body,
+		Chirp: "",
 	}
+
+	dec.Decode(&newChirp)
 
 	newChirp.filterForProfane()
-
-	dbstruct, err := db.loadDB()
-
-	if err != nil {
-		return chirp{}, err
-	}
-
-	dbstruct.Chirps[newChirp.ID] = newChirp
-	
-	db.writeDB(dbstruct)
 
 	return newChirp, nil
 }
 
-func (db *DB) writeChirp(chirp chirp) error {
-	data, err := json.Marshal(chirp)
-
+func (db *DB) appendDB(chirp chirp) error {
+	dbStruct, err := db.loadDB()
 	if err != nil {
 		return err
 	}
 
-	f, err := os.OpenFile(db.path, os.O_APPEND|os.O_WRONLY, 0644) 
+	dbStruct.Chirps[chirp.ID] = chirp
 
+	err = db.writeDB(dbStruct)
 	if err != nil {
 		return err
 	}
-
-	f.Write(data)
-
-	f.Close()
 
 	return nil
 }

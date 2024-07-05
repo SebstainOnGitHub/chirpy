@@ -12,18 +12,20 @@ type chirp struct {
 func (chirp *chirp) filterForProfane() string {
 	val := chirp.Chirp
 
-	splitVal := strings.Split(strings.ToLower(val), " ")
+	splitVal := strings.Split(val, " ")
 
 	returnStr := make([]string, len(splitVal))
 
 	for i, val := range splitVal {
-		if val == "kerfuffle" || val == "sharbert" || val == "fornax" {
+		if strings.ToLower(val) == "kerfuffle" || strings.ToLower(val) == "sharbert" || strings.ToLower(val) == "fornax" {
 			returnStr[i] = "****"
 		} else {
 			returnStr[i] = val
 		}
 	}
 	strChirp := strings.Join(returnStr, " ")
+
 	chirp.Chirp = strChirp
+
 	return strChirp
 }
