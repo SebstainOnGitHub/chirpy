@@ -16,6 +16,59 @@ const metricsTemplate = `
 	</body>
 </html>`
 
+func handleUserLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondWithError(w, http.StatusBadRequest, "Invalid request method")
+		return
+	}
+
+	DB, err := newDB("./database.json")
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error creating database")
+		return
+	}
+
+	user, err := DB.createTempUser(r.Body)
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	code, err := DB.validateLogin(user)
+
+	if err != nil {
+		respondWithError(w, code, err.Error())
+		return
+	}
+
+	respondWithJSON(w, code, user.omitPassword())
+}
+
+func handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondWithError(w, http.StatusBadRequest, "Invalid request method")
+		return
+	}
+
+	DB, err := newDB("./database.json")
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error creating database")
+		return
+	}
+
+	user, err := DB.createUser(r.Body)
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	DB.appendDBUser(user)
+
+	respondWithJSON(w, http.StatusCreated, user.omitPassword())
+}
+
 func handleGetSingleChirp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		respondWithError(w, http.StatusBadRequest, "Invalid request method")
@@ -73,7 +126,7 @@ func handleGetChirps(w http.ResponseWriter, r *http.Request) {
 }
 
 // For Posts
-func handleChirpValidation(w http.ResponseWriter, r *http.Request) {
+func handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError(w, http.StatusMethodNotAllowed, "Invalid request method")
 		return
@@ -94,7 +147,7 @@ func handleChirpValidation(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "Invalid message length")
 		return
 	}
-	DB.appendDB(newChirp)
+	DB.appendDBChirp(newChirp)
 
 	respondWithJSON(w, 201, newChirp)
 }
@@ -144,8 +197,6 @@ func main() {
 	mux.Handle("/app/*", http.StripPrefix("/app/", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("./assets"))))
 
-	mux.HandleFunc("GET /api/chirps", handleGetChirps)
-
 	mux.HandleFunc("/admin/metrics", apiCfg.handleAdminMetrics)
 
 	mux.HandleFunc("GET /api/metrics", apiCfg.handleMetrics)
@@ -154,9 +205,15 @@ func main() {
 
 	mux.HandleFunc("GET /api/healthz", handleHealth)
 
-	mux.HandleFunc("/api/chirps", handleChirpValidation)
+	mux.HandleFunc("/api/login", handleUserLogin)
 
-	mux.HandleFunc("/api/chirps/{id}", handleGetSingleChirp)
+	mux.HandleFunc("/api/users", handleCreateUser)
+
+	mux.HandleFunc("/api/chirps", handleCreateChirp)
+
+	mux.HandleFunc("GET /api/chirps", handleGetChirps)
+
+	mux.HandleFunc("GET /api/chirps/{id}", handleGetSingleChirp)
 
 	srv := &http.Server{
 		Addr:    ":8080",

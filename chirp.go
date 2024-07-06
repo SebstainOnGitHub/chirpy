@@ -5,7 +5,7 @@ import (
 )
 
 type chirp struct {
-	ID    int    `json:id`
+	ID    int    `json:"id"`
 	Chirp string `json:"body"`
 }
 

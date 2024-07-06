@@ -2,9 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
+	"log"
+	"net/http"
 	"os"
 	"sync"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type DB struct {
@@ -14,6 +19,7 @@ type DB struct {
 
 type DBStructure struct {
 	Chirps map[int]chirp `json:"chirps"`
+	Users  map[int]user  `json:"users"`
 }
 
 func newDB(path string) (*DB, error) {
@@ -28,10 +34,11 @@ func newDB(path string) (*DB, error) {
 func (db *DB) ensureDB() error {
 	_, err := os.Stat(db.path)
 	if os.IsNotExist(err) {
-		_, err := os.Create(db.path)
+		f, err := os.Create(db.path)
 		if err != nil {
 			return err
 		}
+		defer f.Close()
 	}
 	return nil
 }
@@ -51,8 +58,8 @@ func (db *DB) loadDB() (DBStructure, error) {
 	err = json.Unmarshal(data, &dbstruct)
 
 	//If file empty
-	if dbstruct.Chirps == nil {
-		return DBStructure{Chirps: map[int]chirp{}}, nil
+	if dbstruct.Chirps == nil && dbstruct.Users == nil {
+		return DBStructure{Chirps: map[int]chirp{}, Users: map[int]user{}}, nil
 	}
 
 	if err != nil {
@@ -89,7 +96,19 @@ func (db *DB) getAllChirps() ([]chirp, error) {
 	return chirpArr, nil
 }
 
-func (db *DB) createID() (int, error) {
+func (db *DB) getAllUsers() ([]user, error) {
+	userArr := []user{}
+	dbstruct, err := db.loadDB()
+	if err != nil {
+		return []user{}, err
+	}
+	for _, val := range dbstruct.Users {
+		userArr = append(userArr, val)
+	}
+	return userArr, nil
+}
+
+func (db *DB) createChirpID() (int, error) {
 	chirpArr, err := db.getAllChirps()
 	if err != nil {
 		return -1, err
@@ -97,28 +116,79 @@ func (db *DB) createID() (int, error) {
 	return len(chirpArr) + 1, nil
 }
 
+func (db *DB) createUserID() (int, error) {
+	userArr, err := db.getAllUsers()
+	if err != nil {
+		return -1, err
+	}
+	return len(userArr) + 1, nil
+}
+
 func (db *DB) createChirp(data io.ReadCloser) (chirp, error) {
 	dec := json.NewDecoder(data)
 
-	id, err := db.createID()
+	id, err := db.createChirpID()
 
 	if err != nil {
 		return chirp{}, err
 	}
 
 	newChirp := chirp{
-		ID:    id,
-		Chirp: "",
+		ID: id,
 	}
 
-	dec.Decode(&newChirp)
+	err = dec.Decode(&newChirp)
+
+	if err != nil {
+		return chirp{}, nil
+	}
 
 	newChirp.filterForProfane()
 
 	return newChirp, nil
 }
 
-func (db *DB) appendDB(chirp chirp) error {
+func (db *DB) createTempUser(body io.ReadCloser) (user, error) {
+	dec := json.NewDecoder(body)
+	id, err := db.createUserID()
+	if err != nil {
+		return user{}, nil
+	}
+	newUser := user{
+		ID: id - 1,
+	}
+
+	dec.Decode(&newUser)
+
+	return newUser, nil
+}
+
+func (db *DB) createUser(body io.ReadCloser) (user, error) {
+	dec := json.NewDecoder(body)
+	id, err := db.createUserID()
+	if err != nil {
+		return user{}, nil
+	}
+	newUser := user{
+		ID: id,
+	}
+
+	dec.Decode(&newUser)
+
+	if _, exists := db.getByEmail(newUser.Email); exists {
+		return user{}, errors.New("email already exists")
+	}
+
+	newUser.Password, err = bcrypt.GenerateFromPassword([]byte(newUser.Password), bcrypt.DefaultCost)
+
+	if err != nil {
+		return user{}, err
+	}
+
+	return newUser, nil
+}
+
+func (db *DB) appendDBChirp(chirp chirp) error {
 	dbStruct, err := db.loadDB()
 	if err != nil {
 		return err
@@ -132,4 +202,49 @@ func (db *DB) appendDB(chirp chirp) error {
 	}
 
 	return nil
+}
+
+func (db *DB) appendDBUser(user user) error {
+	dbStruct, err := db.loadDB()
+	if err != nil {
+		return err
+	}
+
+	dbStruct.Users[user.ID] = user
+
+	err = db.writeDB(dbStruct)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (db *DB) getByEmail(email string) (user, bool) {
+	dbstruct, err := db.loadDB()
+
+	if err != nil {
+		log.Fatal(err)
+		return user{}, false
+	}
+	for _, val := range dbstruct.Users {
+		if val.Email == email {
+			return val, true
+		}
+	}
+	return user{}, false
+}
+
+func (db *DB) validateLogin(logged user) (int, error) {
+	foundUser, exists := db.getByEmail(logged.Email)
+	if !exists {
+		return http.StatusNotFound, errors.New("email not found")
+	}
+
+	if err := bcrypt.CompareHashAndPassword(foundUser.Password, []byte(logged.Password)); err != nil {
+		return http.StatusUnauthorized, errors.New("invalid password")
+	}
+
+	return http.StatusOK, nil
 }
