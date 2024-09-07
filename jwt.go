@@ -19,8 +19,6 @@ type jwtOnlyToken struct {
 	Token string `json:"token"`
 }
 
-//why is the id -1????
-
 func (apicfg *apiConfig) createJWT(r user) (jwtOnlyToken, error) {
 	claims := jwt.MapClaims{
 		"iss": "chirpy",
@@ -43,7 +41,6 @@ func (apicfg *apiConfig) createJWT(r user) (jwtOnlyToken, error) {
 }
 
 func (apicfg *apiConfig) createJWTWithResponse(r user) (jwtResponse, error) {
-
 	claims := jwt.MapClaims{
 		"iss": "chirpy",
 		"iat": jwt.NewNumericDate(time.Now()),
@@ -79,11 +76,12 @@ func (apicfg *apiConfig) createJWTWithResponse(r user) (jwtResponse, error) {
 	}, nil
 }
 
-func (apicfg *apiConfig) validateJWT(header string) (int, error) {
+func (apicfg *apiConfig) validateJWT(header string) (string, error) {
 	//"Bearer " needs to be stripped from the header
 	if len(header) < 7 {
-		return -1, errors.New("no header found")
+		return "", errors.New("no header found")
 	}
+
 	tokenString := header[7:]
 
 	token, err := jwt.ParseWithClaims(tokenString, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
@@ -91,19 +89,13 @@ func (apicfg *apiConfig) validateJWT(header string) (int, error) {
 	})
 
 	if err != nil {
-		return -1, err
+		return "", err
 	}
 
-	id, err := token.Claims.GetSubject()
+	userID, err := token.Claims.GetSubject()
 
 	if err != nil {
-		return -1, err
-	}
-
-	userID, err := strconv.Atoi(id)
-
-	if err != nil {
-		return -1, err
+		return "", err
 	}
 
 	return userID, nil

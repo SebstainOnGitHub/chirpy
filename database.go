@@ -18,8 +18,8 @@ type DB struct {
 }
 
 type DBStructure struct {
-	Chirps         map[int]chirp         `json:"chirps"`
-	Users          map[int]user          `json:"users"`
+	Chirps         map[int]chirp   `json:"chirps"`
+	Users          map[int]user    `json:"users"`
 	Refresh_Tokens []DB_Refr_Token `json:"refresh_tokens"`
 }
 
@@ -103,18 +103,6 @@ func (db *DB) getAllChirps() ([]chirp, error) {
 	return chirpArr, nil
 }
 
-func (db *DB) getAllUsers() ([]user, error) {
-	userArr := []user{}
-	dbstruct, err := db.loadDB()
-	if err != nil {
-		return []user{}, err
-	}
-	for _, val := range dbstruct.Users {
-		userArr = append(userArr, val)
-	}
-	return userArr, nil
-}
-
 func (db *DB) getAllRefreshTokens() ([]DB_Refr_Token, error) {
 	refrTokenArr := []DB_Refr_Token{}
 	dbstruct, err := db.loadDB()
@@ -124,26 +112,26 @@ func (db *DB) getAllRefreshTokens() ([]DB_Refr_Token, error) {
 	return append(refrTokenArr, dbstruct.Refresh_Tokens...), nil
 }
 
-func (db *DB) createChirpID() (int, error) {
-	chirpArr, err := db.getAllChirps()
+func (db *DB) newChirpID() (int, error) {
+	dbstruct, err := db.loadDB()
 	if err != nil {
-		return -1, err
+		return -1, nil
 	}
-	return len(chirpArr) + 1, nil
+	return len(dbstruct.Chirps) + 1, nil
 }
 
-func (db *DB) createUserID() (int, error) {
-	userArr, err := db.getAllUsers()
+func (db *DB) newUserID() (int, error) {
+	dbstruct, err := db.loadDB()
 	if err != nil {
-		return -1, err
+		return -1, nil
 	}
-	return len(userArr) + 1, nil
+	return len(dbstruct.Chirps) + 1, nil
 }
 
-func (db *DB) createChirp(data io.ReadCloser) (chirp, error) {
+func (db *DB) createChirpStruct(data io.ReadCloser) (chirp, error) {
 	dec := json.NewDecoder(data)
 
-	id, err := db.createChirpID()
+	id, err := db.newChirpID()
 
 	if err != nil {
 		return chirp{}, err
@@ -160,6 +148,24 @@ func (db *DB) createChirp(data io.ReadCloser) (chirp, error) {
 	}
 
 	newChirp.filterForProfane()
+
+	return newChirp, nil
+}
+
+func (db *DB) createChirp(data io.ReadCloser, userID int) (chirp, error) {
+	newChirp, err := db.createChirpStruct(data)
+
+	if err != nil {
+		return chirp{}, err
+	}
+
+	newChirp.Author_ID = userID
+
+	err = db.appendDBChirp(newChirp)
+
+	if err != nil {
+		return chirp{}, err
+	}
 
 	return newChirp, nil
 }
@@ -187,17 +193,16 @@ func (db *DB) validatePotential(body io.ReadCloser) (user, error) {
 func (db *DB) createTempUser(body io.ReadCloser) (user, error) {
 	defer body.Close()
 
-	id, err := db.createUserID()
-
-	if err != nil {
-		return user{}, errors.New("error creating id")
-	}
-
 	newUser := jsonUser{}
 
-	//To counteract the +1 from createUserID (wants to make a new id)
+	id, err := db.newUserID()
+
+	if err != nil {
+		return user{}, err
+	}
+
 	finalUser := user{
-		ID: id - 1,
+		ID: id,
 	}
 
 	dec := json.NewDecoder(body)
@@ -222,16 +227,17 @@ func (db *DB) createTempUser(body io.ReadCloser) (user, error) {
 func (db *DB) createUser(body io.ReadCloser) (user, error) {
 	defer body.Close()
 
-	id, err := db.createUserID()
+	newUser := jsonUser{}
+
+	id, err := db.newUserID()
 
 	if err != nil {
-		return user{}, errors.New("error creating id")
+		return user{}, err
 	}
-
-	newUser := jsonUser{}
 
 	finalUser := user{
 		ID: id,
+		Is_Chirpy_Red: false,
 	}
 
 	dec := json.NewDecoder(body)
@@ -374,8 +380,8 @@ func (db *DB) removeRefrToken(tokenstr string) error {
 		return err
 	}
 
-	ommitedTokenArr :=  dbstruct.Refresh_Tokens[:indexOfRefr(token, dbstruct.Refresh_Tokens)]
-	ommitedTokenArr = append(ommitedTokenArr, dbstruct.Refresh_Tokens[indexOfRefr(token, dbstruct.Refresh_Tokens) + 1:]...)
+	ommitedTokenArr := dbstruct.Refresh_Tokens[:indexOfRefr(token, dbstruct.Refresh_Tokens)]
+	ommitedTokenArr = append(ommitedTokenArr, dbstruct.Refresh_Tokens[indexOfRefr(token, dbstruct.Refresh_Tokens)+1:]...)
 
 	dbstruct.Refresh_Tokens = ommitedTokenArr
 

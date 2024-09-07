@@ -5,8 +5,9 @@ import (
 )
 
 type chirp struct {
-	ID    int    `json:"id"`
-	Chirp string `json:"body"`
+	ID        int `json:"id"`
+	Author_ID int `json:"author_id"`
+	Chirp     string `json:"body"`
 }
 
 func (chirp *chirp) filterForProfane() string {

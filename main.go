@@ -21,6 +21,72 @@ const metricsTemplate = `
 
 const pathToDB = "./database.json"
 
+func (apicfg *apiConfig) handleDeleteChirp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		respondWithError(w, http.StatusBadRequest, "invalid request method")
+		return
+	}
+
+	hdr := r.Header.Get("Authorization")
+
+	if hdr == "" {
+		respondWithError(w, http.StatusBadRequest, "header(s) not present")
+		return
+	}
+
+	strUserID, err := apicfg.validateJWT(hdr)
+
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error validating token")
+		return
+	}
+
+	userID, err := strconv.Atoi(strUserID)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error parsing id to string")
+		return
+	}
+
+	strID := r.PathValue("chirpID")
+
+	chirpID, err := strconv.Atoi(strID)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	DB, err := newDB(pathToDB)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating database")
+		return
+	}
+
+	dbstruct, err := DB.loadDB()
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error loading database")
+		return
+	}
+	
+	chirp, ok := dbstruct.Chirps[chirpID]
+
+	if !ok {
+		respondWithError(w, http.StatusBadRequest, "chirp not found")
+		return
+	}
+
+	if chirp.Author_ID != userID {
+		respondWithError(w, http.StatusForbidden, "authorised user not author of chirp")
+		return
+	}
+
+	delete(dbstruct.Chirps, chirpID)
+
+	respondWithJSON(w, http.StatusNoContent, "")
+}
+
 func handleRevokeAccessToken(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError(w, http.StatusBadRequest, "invalid request method")
@@ -58,7 +124,7 @@ func (apicfg *apiConfig) handleVerifyAccessToken(w http.ResponseWriter, r *http.
 		return
 	}
 
-	db, err := newDB(pathToDB)
+	DB, err := newDB(pathToDB)
 
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error creating database")
@@ -72,14 +138,14 @@ func (apicfg *apiConfig) handleVerifyAccessToken(w http.ResponseWriter, r *http.
 		return
 	}
 
-	userID, err := db.validateRefreshToken(hdr)
+	userID, err := DB.validateRefreshToken(hdr)
 
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "error validating refresh token")
 		return
 	}
 
-	user, err := db.getUsrByID(userID)
+	user, err := DB.getUsrByID(userID)
 
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "error finding user")
@@ -102,16 +168,24 @@ func (apicfg *apiConfig) handleVerifyJWT(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusBadRequest, "invalid request method")
 		return
 	}
-
-	if r.Header.Get("Authorization") == "" {
+	
+	hdr := r.Header.Get("Authorization")
+	if hdr == "" {
 		respondWithError(w, http.StatusBadRequest, "header(s) not present")
 		return
 	}
 
-	userID, err := apicfg.validateJWT(r.Header.Get("Authorization"))
+	strID, err := apicfg.validateJWT(hdr)
 
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "error validating token")
+		return
+	}
+
+	userID, err := strconv.Atoi(strID)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error parsing id to int")
 		return
 	}
 
@@ -256,17 +330,39 @@ func handleGetChirps(w http.ResponseWriter, r *http.Request) {
 }
 
 // For Posts
-func handleCreateChirp(w http.ResponseWriter, r *http.Request) {
+func (apicfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError(w, http.StatusMethodNotAllowed, "invalid request method")
 		return
 	}
+
+	if r.Header.Get("Authorization") == "" {
+		respondWithError(w, http.StatusBadRequest, "header(s) not present")
+		return
+	}
+
 	DB, err := newDB(pathToDB)
+	
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error creating database")
 		return
 	}
-	newChirp, err := DB.createChirp(r.Body)
+
+	strID, err := apicfg.validateJWT(r.Header.Get("Authorization"))
+
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error validating token")
+		return
+	}
+
+	userID, err := strconv.Atoi(strID)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error parsing id to integer")
+		return
+	}
+	
+	newChirp, err := DB.createChirp(r.Body, userID)
 
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error creating chirp")
@@ -330,6 +426,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.Handle("/app/*", http.StripPrefix("/app/", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
+	
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("./assets"))))
 
 	mux.HandleFunc("/admin/metrics", apiCfg.handleAdminMetrics)
@@ -350,11 +447,13 @@ func main() {
 
 	mux.HandleFunc("/api/revoke", handleRevokeAccessToken)
 
-	mux.HandleFunc("/api/chirps", handleCreateChirp)
+	mux.HandleFunc("/api/chirps", apiCfg.handleCreateChirp)
 
 	mux.HandleFunc("GET /api/chirps", handleGetChirps)
 
 	mux.HandleFunc("/api/chirps/{id}", handleGetSingleChirp)
+	
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handleDeleteChirp)
 
 	srv := &http.Server{
 		Addr:    ":8080",
