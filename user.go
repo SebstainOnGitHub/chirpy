@@ -1,17 +1,24 @@
 package main
 
 type user struct {
-	ID int `json:"id"`
-	Email string `json:"email"`
+	ID       int    `json:"id"`
+	Email    string `json:"email"`
 	Password []byte `json:"password"`
 }
 
-type displayUser struct {
-	ID int
-	Email string
+type jsonUser struct {
+	ID       int    `json:"id"`
+	Email    string `json:"email"`
+	//difference is password (string)
+	Password string `json:"password"`
 }
 
-func (usr *user) omitPassword() displayUser{
+type displayUser struct {
+	ID    int    `json:"id"`
+	Email string `json:"email"`
+}
+
+func (usr *user) omitPassword() displayUser {
 	return displayUser{
 		usr.ID,
 		usr.Email,

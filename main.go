@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"text/template"
+
+	"github.com/joho/godotenv"
 )
 
 const metricsTemplate = `
@@ -16,62 +19,190 @@ const metricsTemplate = `
 	</body>
 </html>`
 
-func handleUserLogin(w http.ResponseWriter, r *http.Request) {
+const pathToDB = "./database.json"
+
+func handleRevokeAccessToken(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondWithError(w, http.StatusBadRequest, "Invalid request method")
+		respondWithError(w, http.StatusBadRequest, "invalid request method")
 		return
 	}
 
-	DB, err := newDB("./database.json")
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error creating database")
+	hdr := r.Header.Get("Authorization")
+
+	if hdr == "" {
+		respondWithError(w, http.StatusBadRequest, "header(s) not present")
 		return
 	}
 
-	user, err := DB.createTempUser(r.Body)
+	DB, err := newDB(pathToDB)
 
 	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating database")
+		return
+	}
+
+	err = DB.findAndDeleteRefrToken(hdr)
+	
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusNoContent, nil)
+}
+
+// Handles refresh endpoint
+func (apicfg *apiConfig) handleVerifyAccessToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondWithError(w, http.StatusBadRequest, "invalid request method")
+		return
+	}
+
+	db, err := newDB(pathToDB)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating database")
+		return
+	}
+
+	hdr := r.Header.Get("Authorization")
+
+	if hdr == "" {
+		respondWithError(w, http.StatusBadRequest, "header(s) not present")
+		return
+	}
+
+	userID, err := db.validateRefreshToken(hdr)
+
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error validating refresh token")
+		return
+	}
+
+	user, err := db.getUsrByID(userID)
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error finding user")
+		return
+	}
+
+	newJWT, err := apicfg.createJWT(user)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating a new refresh token")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, newJWT)
+}
+
+// Handles updating user info with a jwt, nothing else
+func (apicfg *apiConfig) handleVerifyJWT(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		respondWithError(w, http.StatusBadRequest, "invalid request method")
+		return
+	}
+
+	if r.Header.Get("Authorization") == "" {
+		respondWithError(w, http.StatusBadRequest, "header(s) not present")
+		return
+	}
+
+	userID, err := apicfg.validateJWT(r.Header.Get("Authorization"))
+
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error validating token")
+		return
+	}
+
+	DB, err := newDB(pathToDB)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating database")
+		return
+	}
+
+	userDetailsInRequest, err := DB.createTempUser(r.Body)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	userInDB, err := DB.updateUser(&userDetailsInRequest, userID)
+
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, userInDB.omitPassword())
+}
+
+// Handles creating a JWT and a refresh token to login in future. The refr token is just used to make a new JWT to log in again.
+func (apicfg *apiConfig) handleCreateJWT(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondWithError(w, http.StatusBadRequest, "invalid request method")
+		return
+	}
+
+	DB, err := newDB(pathToDB)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating database")
+		return
+	}
+
+	createdUser, err := DB.validatePotential(r.Body)
+
+	if err != nil{
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	code, err := DB.validateLogin(user)
+	jwtResp, err := apicfg.createJWTWithResponse(createdUser)
 
 	if err != nil {
-		respondWithError(w, code, err.Error())
+		respondWithError(w, http.StatusInternalServerError, "error creating JWT")
 		return
 	}
 
-	respondWithJSON(w, code, user.omitPassword())
+	respondWithJSON(w, 200, jwtResp)
 }
 
 func handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondWithError(w, http.StatusBadRequest, "Invalid request method")
+		respondWithError(w, http.StatusBadRequest, "invalid request method")
 		return
 	}
 
-	DB, err := newDB("./database.json")
+	DB, err := newDB(pathToDB)
+
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error creating database")
+		respondWithError(w, http.StatusInternalServerError, "error creating database")
 		return
 	}
 
-	user, err := DB.createUser(r.Body)
+	createdUser, err := DB.createUser(r.Body)
 
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	DB.appendDBUser(user)
+	err = DB.appendDBUser(createdUser)
 
-	respondWithJSON(w, http.StatusCreated, user.omitPassword())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, createdUser.omitPassword())
 }
 
 func handleGetSingleChirp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondWithError(w, http.StatusBadRequest, "Invalid request method")
+		respondWithError(w, http.StatusBadRequest, "invalid request method")
 		return
 	}
 
@@ -83,23 +214,22 @@ func handleGetSingleChirp(w http.ResponseWriter, r *http.Request) {
 		log.Fatal(err)
 	}
 
-	DB, err := newDB("./database.json")
+	DB, err := newDB(pathToDB)
 
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error creating database")
+		respondWithError(w, http.StatusInternalServerError, "error creating database")
 		return
 	}
 
 	chirpArr, err := DB.getAllChirps()
 
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error getting chirps")
+		respondWithError(w, http.StatusInternalServerError, "error getting chirps")
 		return
 	}
 
 	if id > len(chirpArr) || id < 1 {
-		respondWithError(w, http.StatusNotFound, "ID not found")
-		return
+		respondWithError(w, http.StatusNotFound, "id not found")
 	} else {
 		respondWithJSON(w, http.StatusOK, chirpArr[id-1])
 	}
@@ -107,7 +237,7 @@ func handleGetSingleChirp(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleGetChirps(w http.ResponseWriter, r *http.Request) {
-	DB, err := newDB("./database.json")
+	DB, err := newDB(pathToDB)
 	if err != nil {
 		log.Fatal(err)
 		return
@@ -118,7 +248,7 @@ func handleGetChirps(w http.ResponseWriter, r *http.Request) {
 	chirpArr, err := DB.getAllChirps()
 
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error getting chirps from database")
+		respondWithError(w, http.StatusInternalServerError, "error getting chirps from database")
 		return
 	}
 
@@ -128,25 +258,26 @@ func handleGetChirps(w http.ResponseWriter, r *http.Request) {
 // For Posts
 func handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondWithError(w, http.StatusMethodNotAllowed, "Invalid request method")
+		respondWithError(w, http.StatusMethodNotAllowed, "invalid request method")
 		return
 	}
-	DB, err := newDB("./database.json")
+	DB, err := newDB(pathToDB)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error creating database")
+		respondWithError(w, http.StatusInternalServerError, "error creating database")
 		return
 	}
 	newChirp, err := DB.createChirp(r.Body)
 
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error creating chirp")
+		respondWithError(w, http.StatusInternalServerError, "error creating chirp")
 		return
 	}
 
 	if len(newChirp.Chirp) > 140 || len(newChirp.Chirp) == 0 {
-		respondWithError(w, http.StatusBadRequest, "Invalid message length")
+		respondWithError(w, http.StatusBadRequest, "invalid message length")
 		return
 	}
+
 	DB.appendDBChirp(newChirp)
 
 	respondWithJSON(w, 201, newChirp)
@@ -164,21 +295,21 @@ func (cfg *apiConfig) handleReset(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) handleAdminMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		http.Error(w, "invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 
 	tmpl, err := template.New("metrics").Parse(metricsTemplate)
 
 	if err != nil {
-		http.Error(w, "Error creating template", http.StatusInternalServerError)
+		http.Error(w, "error creating template", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html")
 
 	if err := tmpl.Execute(w, cfg.fileserverHits); err != nil {
-		http.Error(w, "Error executing template", http.StatusInternalServerError)
+		http.Error(w, "error executing template", http.StatusInternalServerError)
 		return
 	}
 }
@@ -190,7 +321,11 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	apiCfg := &apiConfig{}
+	godotenv.Load()
+
+	jwtSecret := os.Getenv("JWT_SECRET")
+
+	apiCfg := &apiConfig{jwtSecret: jwtSecret}
 
 	mux := http.NewServeMux()
 
@@ -199,21 +334,27 @@ func main() {
 
 	mux.HandleFunc("/admin/metrics", apiCfg.handleAdminMetrics)
 
-	mux.HandleFunc("GET /api/metrics", apiCfg.handleMetrics)
+	mux.HandleFunc("/api/metrics", apiCfg.handleMetrics)
 
 	mux.HandleFunc("/api/reset", apiCfg.handleReset)
 
-	mux.HandleFunc("GET /api/healthz", handleHealth)
+	mux.HandleFunc("/api/healthz", handleHealth)
 
-	mux.HandleFunc("/api/login", handleUserLogin)
+	mux.HandleFunc("/api/login", apiCfg.handleCreateJWT)
+
+	mux.HandleFunc("/api/refresh", apiCfg.handleVerifyAccessToken)
 
 	mux.HandleFunc("/api/users", handleCreateUser)
+
+	mux.HandleFunc("PUT /api/users", apiCfg.handleVerifyJWT)
+
+	mux.HandleFunc("/api/revoke", handleRevokeAccessToken)
 
 	mux.HandleFunc("/api/chirps", handleCreateChirp)
 
 	mux.HandleFunc("GET /api/chirps", handleGetChirps)
 
-	mux.HandleFunc("GET /api/chirps/{id}", handleGetSingleChirp)
+	mux.HandleFunc("/api/chirps/{id}", handleGetSingleChirp)
 
 	srv := &http.Server{
 		Addr:    ":8080",
