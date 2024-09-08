@@ -1,10 +1,13 @@
 package main
 
-import "net/http"
+import (
+	"net/http"
+)
 
 type apiConfig struct {
 	fileserverHits int
 	jwtSecret      string
+	polkaApiKey    string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {

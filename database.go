@@ -125,7 +125,7 @@ func (db *DB) newUserID() (int, error) {
 	if err != nil {
 		return -1, nil
 	}
-	return len(dbstruct.Chirps) + 1, nil
+	return len(dbstruct.Users) + 1, nil
 }
 
 func (db *DB) createChirpStruct(data io.ReadCloser) (chirp, error) {
@@ -236,7 +236,7 @@ func (db *DB) createUser(body io.ReadCloser) (user, error) {
 	}
 
 	finalUser := user{
-		ID: id,
+		ID:            id,
 		Is_Chirpy_Red: false,
 	}
 
@@ -316,6 +316,7 @@ func (db *DB) appendDBRefrToken(refrToken DB_Refr_Token) error {
 
 func (db *DB) updateUser(updatedUser *user, userID int) (user, error) {
 	dbstruct, err := db.loadDB()
+
 	if err != nil {
 		return user{}, err
 	}
@@ -336,6 +337,7 @@ func (db *DB) updateUser(updatedUser *user, userID int) (user, error) {
 		ID:       userID,
 		Email:    updatedUser.Email,
 		Password: updatedUser.Password,
+		Is_Chirpy_Red: updatedUser.Is_Chirpy_Red,
 	}
 
 	dbstruct.Users[userID] = usrNotPtr
@@ -490,4 +492,41 @@ func (db *DB) getByEmail(email string) (user, bool) {
 	}
 
 	return user{}, false
+}
+
+func (db *DB) upgradeUser(id int) error {
+	dbstruct, err := db.loadDB()
+	
+	if err != nil {
+		return err
+	}
+
+	if dbUser, ok := dbstruct.Users[id]; ok{
+		dbUser.Is_Chirpy_Red = true
+
+		dbstruct.Users[id] = dbUser
+		
+		db.writeDB(dbstruct)
+		return nil
+	}
+
+	return errors.New("user does not exist")
+}
+
+func (db *DB) decodeWebhook(data io.ReadCloser) error {
+	webhook := webhookBody{}
+
+	var err error
+
+	json.NewDecoder(data).Decode(&webhook)
+
+	fmt.Println(webhook)
+
+	defer data.Close()
+
+	if webhook.Event == "user.upgraded" {
+		err = db.upgradeUser(webhook.Data.ID)
+	}
+
+	return err
 }

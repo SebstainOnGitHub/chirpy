@@ -13,6 +13,7 @@ type jwtResponse struct {
 	Email         string `json:"email"`
 	Token         string `json:"token"`
 	Refresh_Token string `json:"refresh_token"`
+	Is_Chirpy_Red bool `json:"is_chirpy_red"`
 }
 
 type jwtOnlyToken struct {
@@ -73,6 +74,7 @@ func (apicfg *apiConfig) createJWTWithResponse(r user) (jwtResponse, error) {
 		Email:         r.Email,
 		Token:         token,
 		Refresh_Token: dbRefrToken.Refresh_Token,
+		Is_Chirpy_Red: r.Is_Chirpy_Red,
 	}, nil
 }
 

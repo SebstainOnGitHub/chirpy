@@ -21,16 +21,51 @@ const metricsTemplate = `
 
 const pathToDB = "./database.json"
 
-func (apicfg *apiConfig) handleDeleteChirp(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		respondWithError(w, http.StatusBadRequest, "invalid request method")
+func (apicfg *apiConfig) handleUpgradeWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondWithError(w, http.StatusMethodNotAllowed, "invalid request method")
 		return
 	}
 
 	hdr := r.Header.Get("Authorization")
 
 	if hdr == "" {
-		respondWithError(w, http.StatusBadRequest, "header(s) not present")
+		respondWithError(w, http.StatusUnauthorized, "header(s) not present")
+		return
+	}
+
+	if hdr[7:] != apicfg.polkaApiKey {
+		respondWithError(w, http.StatusUnauthorized, "invalid header")
+		return
+	}
+
+	DB, err := newDB(pathToDB)
+
+	if err != nil {
+		respondWithError(w, http.StatusMethodNotAllowed, "error connecting to database")
+		return
+	}
+
+	err = DB.decodeWebhook(r.Body)
+
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	
+	respondWithJSON(w, http.StatusNoContent, "")
+}
+
+func (apicfg *apiConfig) handleDeleteChirp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		respondWithError(w, http.StatusMethodNotAllowed, "invalid request method")
+		return
+	}
+
+	hdr := r.Header.Get("Authorization")
+
+	if hdr == "" {
+		respondWithError(w, http.StatusUnauthorized, "header(s) not present")
 		return
 	}
 
@@ -69,7 +104,7 @@ func (apicfg *apiConfig) handleDeleteChirp(w http.ResponseWriter, r *http.Reques
 		respondWithError(w, http.StatusInternalServerError, "error loading database")
 		return
 	}
-	
+
 	chirp, ok := dbstruct.Chirps[chirpID]
 
 	if !ok {
@@ -89,14 +124,14 @@ func (apicfg *apiConfig) handleDeleteChirp(w http.ResponseWriter, r *http.Reques
 
 func handleRevokeAccessToken(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondWithError(w, http.StatusBadRequest, "invalid request method")
+		respondWithError(w, http.StatusMethodNotAllowed, "invalid request method")
 		return
 	}
 
 	hdr := r.Header.Get("Authorization")
 
 	if hdr == "" {
-		respondWithError(w, http.StatusBadRequest, "header(s) not present")
+		respondWithError(w, http.StatusUnauthorized, "header(s) not present")
 		return
 	}
 
@@ -108,7 +143,7 @@ func handleRevokeAccessToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = DB.findAndDeleteRefrToken(hdr)
-	
+
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, err.Error())
 		return
@@ -120,7 +155,7 @@ func handleRevokeAccessToken(w http.ResponseWriter, r *http.Request) {
 // Handles refresh endpoint
 func (apicfg *apiConfig) handleVerifyAccessToken(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondWithError(w, http.StatusBadRequest, "invalid request method")
+		respondWithError(w, http.StatusMethodNotAllowed, "invalid request method")
 		return
 	}
 
@@ -134,7 +169,7 @@ func (apicfg *apiConfig) handleVerifyAccessToken(w http.ResponseWriter, r *http.
 	hdr := r.Header.Get("Authorization")
 
 	if hdr == "" {
-		respondWithError(w, http.StatusBadRequest, "header(s) not present")
+		respondWithError(w, http.StatusUnauthorized, "header(s) not present")
 		return
 	}
 
@@ -165,17 +200,18 @@ func (apicfg *apiConfig) handleVerifyAccessToken(w http.ResponseWriter, r *http.
 // Handles updating user info with a jwt, nothing else
 func (apicfg *apiConfig) handleVerifyJWT(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
-		respondWithError(w, http.StatusBadRequest, "invalid request method")
-		return
-	}
-	
-	hdr := r.Header.Get("Authorization")
-	if hdr == "" {
-		respondWithError(w, http.StatusBadRequest, "header(s) not present")
+		respondWithError(w, http.StatusMethodNotAllowed, "invalid request method")
 		return
 	}
 
-	strID, err := apicfg.validateJWT(hdr)
+	hdr := r.Header.Get("Authorization")
+	
+	if hdr == "" {
+		respondWithError(w, http.StatusUnauthorized, "header(s) not present")
+		return
+	}
+
+	strID, err := apicfg.validateJWT(r.Header.Get("Authorization"))
 
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "error validating token")
@@ -216,7 +252,7 @@ func (apicfg *apiConfig) handleVerifyJWT(w http.ResponseWriter, r *http.Request)
 // Handles creating a JWT and a refresh token to login in future. The refr token is just used to make a new JWT to log in again.
 func (apicfg *apiConfig) handleCreateJWT(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondWithError(w, http.StatusBadRequest, "invalid request method")
+		respondWithError(w, http.StatusMethodNotAllowed, "invalid request method")
 		return
 	}
 
@@ -229,7 +265,7 @@ func (apicfg *apiConfig) handleCreateJWT(w http.ResponseWriter, r *http.Request)
 
 	createdUser, err := DB.validatePotential(r.Body)
 
-	if err != nil{
+	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -246,7 +282,7 @@ func (apicfg *apiConfig) handleCreateJWT(w http.ResponseWriter, r *http.Request)
 
 func handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondWithError(w, http.StatusBadRequest, "invalid request method")
+		respondWithError(w, http.StatusMethodNotAllowed, "invalid request method")
 		return
 	}
 
@@ -276,7 +312,7 @@ func handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func handleGetSingleChirp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondWithError(w, http.StatusBadRequest, "invalid request method")
+		respondWithError(w, http.StatusMethodNotAllowed, "invalid request method")
 		return
 	}
 
@@ -312,12 +348,16 @@ func handleGetSingleChirp(w http.ResponseWriter, r *http.Request) {
 
 func handleGetChirps(w http.ResponseWriter, r *http.Request) {
 	DB, err := newDB(pathToDB)
+
+	author_id := r.URL.Query().Get("author_id")
+	
+	sortType := r.URL.Query().Get("sort")
+
+	
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
-
-	DB.loadDB()
 
 	chirpArr, err := DB.getAllChirps()
 
@@ -326,7 +366,33 @@ func handleGetChirps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondWithJSON(w, 200, chirpArr)
+	respondArr := []chirp{}
+
+	if author_id != "" {
+		authorChirpArr := []chirp{}
+		intAuthorID, err := strconv.Atoi(author_id)
+
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "error parsing the query parameter into an integer")
+			return
+		}
+
+		for _, val := range chirpArr {
+			if val.Author_ID == intAuthorID{
+				authorChirpArr = append(authorChirpArr, val)
+			}
+		}
+		
+		respondArr = authorChirpArr
+	} else {
+		respondArr = chirpArr
+	}
+
+	if sortType == "desc" {
+		respondArr = reverseOrder(respondArr)
+	}
+
+	respondWithJSON(w, http.StatusOK, respondArr)
 }
 
 // For Posts
@@ -336,15 +402,15 @@ func (apicfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if r.Header.Get("Authorization") == "" {
-		respondWithError(w, http.StatusBadRequest, "header(s) not present")
+	DB, err := newDB(pathToDB)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating database")
 		return
 	}
 
-	DB, err := newDB(pathToDB)
-	
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "error creating database")
+	if r.Header.Get("Authorization") == "" {
+		respondWithError(w, http.StatusBadRequest, "header(s) not present")
 		return
 	}
 
@@ -361,7 +427,7 @@ func (apicfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Reques
 		respondWithError(w, http.StatusInternalServerError, "error parsing id to integer")
 		return
 	}
-	
+
 	newChirp, err := DB.createChirp(r.Body, userID)
 
 	if err != nil {
@@ -420,13 +486,14 @@ func main() {
 	godotenv.Load()
 
 	jwtSecret := os.Getenv("JWT_SECRET")
+	polkaApiKey := os.Getenv("POLKA_API_KEY")
 
-	apiCfg := &apiConfig{jwtSecret: jwtSecret}
+	apiCfg := &apiConfig{jwtSecret: jwtSecret, polkaApiKey: polkaApiKey}
 
 	mux := http.NewServeMux()
 
 	mux.Handle("/app/*", http.StripPrefix("/app/", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
-	
+
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("./assets"))))
 
 	mux.HandleFunc("/admin/metrics", apiCfg.handleAdminMetrics)
@@ -447,12 +514,14 @@ func main() {
 
 	mux.HandleFunc("/api/revoke", handleRevokeAccessToken)
 
+	mux.HandleFunc("/api/polka/webhooks", apiCfg.handleUpgradeWebhook)
+
 	mux.HandleFunc("/api/chirps", apiCfg.handleCreateChirp)
 
 	mux.HandleFunc("GET /api/chirps", handleGetChirps)
 
 	mux.HandleFunc("/api/chirps/{id}", handleGetSingleChirp)
-	
+
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handleDeleteChirp)
 
 	srv := &http.Server{
