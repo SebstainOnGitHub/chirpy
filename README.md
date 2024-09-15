@@ -1,6 +1,6 @@
 # Chirpy API
 
-Chirpy is a basic API for managing user authentication, authorization, and posting/deleting "chirps" (short messages). It includes user management, token-based authentication, and chirp management, including the creation and deletion of chirps. Additionally, it supports metrics monitoring for administrators.
+Chirpy, a play on twitter (now X), is a basic API for managing user authentication, authorization, and posting/deleting "chirps" (short messages). It includes user management, token-based authentication, and chirp management, including the creation and deletion of chirps. Additionally, it supports metrics monitoring for administrators.
 
 ## Features
 
