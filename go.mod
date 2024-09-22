@@ -1,4 +1,4 @@
-module example.com/SebstainOnGitHub/chirpy
+module github.com/sebstainsgit/chirpy
 
 go 1.22.4
 
