@@ -15,7 +15,7 @@ Chirpy, a play on the name twitter (now X), is a basic API for managing user aut
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/chirpy-api.git
+   git clone https://github.com/sebstainsgit/chirpy-api.git
    cd chirpy-api
 2. Install the dependencies:
    ```bash
